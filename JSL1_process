@@ -1,0 +1,52 @@
+# !/bin/bash
+#$ -l h_vmem=10G
+#$ -l m_mem_free=10G
+#$ -pe smp 32
+module unload binutils
+module load STAR
+module load SRA-Toolkit
+module load jdk
+module load python/3.6
+module load gcc8
+module load SAMtools
+#Now do real things
+cd /scr1/users/yangk4/JSL1/
+mkdir STAR
+for i in `cat SRR_list`;
+do
+    echo "#Run FASTQC"
+    echo "mkdir ./fastqc_1" >> DL_and_process_$i
+    echo "mkdir ./fastqc_2" >> DL_and_process_$i
+    echo "/home/yangk4/FastQC/fastqc $i\_1.fastq -o ./fastqc_1 &" >> DL_and_process_$i
+    echo "/home/yangk4/FastQC/fastqc $i\_2.fastq -o ./fastqc_2 &" >> DL_and_process_$i
+    echo "wait" >> DL_and_process_$i
+    echo "#Trim with BBDUK"
+    mkdir ./trimmed
+    echo "/home/yangk4/bbmap/bbduk.sh ref=/home/yangk4/bbmap/resources/adapters.fa in1=$i\_1.fastq in2=$i\_2.fastq out1=./trimmed/$i\_1_trimmed.fastq out2=./trimmed/$i\_2_trimmed.fastq minlength=35 ktrim=r k=23 mink=11 hdist=1 tpe tbo qtrim=r trimq=20 qin=33 -Xmx40g threads=8" >> DL_and_process_$i
+    echo "#Run FASTQC again"
+    mkdir ./trimmed/fastqc_1
+    mkdir ./trimmed/fastqc_2
+    echo "/home/yangk4/FastQC/fastqc ./trimmed/$i\_1_trimmed.fastq -o ./trimmed/fastqc_1 &" >> DL_and_process_$i
+    echo "/home/yangk4/FastQC/fastqc ./trimmed/$i\_2_trimmed.fastq -o ./trimmed/fastqc_2 &" >> DL_and_process_$i
+    echo "wait" >> DL_and_process_$i
+    echo "#Run STAR"
+    echo "STAR --genomeDir /scr1/users/yangk4/ref/genomes/hg38  --readFilesIn ./trimmed/$i\_1_trimmed.fastq ./trimmed/$i\_2_trimmed.fastq --runThreadN 8 --outSAMtype BAM Unsorted --outFileNamePrefix ./$i. --outSAMattributes All --alignSJoverhangMin 8 --outSAMunmapped Within" >> DL_and_process_$i
+    echo "#Index with samtools for MAJIQ"
+    echo "samtools sort -@ 7 -o $i\_deduplicated.bam $i.Aligned.out.bam" >> DL_and_process_$i
+    echo "samtools index $i\_deduplicated.bam" >> DL_and_process_$i
+    echo "#Run MAJIQ" >> DL_and_process_$i
+    echo "source /home/yangk4/majiq_2_install/env/bin/activate" >> DL_and_process_$i
+    mkdir ./majiq_$i
+    echo -e "[info]\nreadlen=150\nbamdirs=./\ngenome=hg38\ngenome_path=/scr1/users/yangk4/ref/genomes/hg38\n[experiments]\nWT=${i}_deduplicated" >> ./majiq_$i/settings.txt
+    echo "majiq build /scr1/users/yangk4/ref/db/gencode.v31.annotation.gff3 -c ./majiq_$i/settings.txt --output ./majiq_$i/build --nproc 8" >> DL_and_process_$i
+    echo "majiq psi ./majiq_$i/build/$i\_deduplicated.majiq --nproc 8 --output ./majiq_$i --name $i" >> DL_and_process_$i
+    echo "voila psi ./majiq_$i/$i.psi.voila --splicegraph ./majiq_$i/build/splicegraph.sql -o ./majiq_$i/voila/$i" >> DL_and_process_$i
+    echo "deactivate" >> DL_and_process_$i
+done
+
+#Processing chunk 0
+bash DL_and_process_SRR5173296 &
+bash DL_and_process_SRR5173295 &
+bash DL_and_process_SRR5173293 &
+bash DL_and_process_SRR5173294 &
+wait
